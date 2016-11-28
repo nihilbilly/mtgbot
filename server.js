@@ -13,7 +13,7 @@ process.on('uncaughtException', function (err) {
 	console.log('Uncaught exception: ', err);
 });
 
-var slack = new Slack("xoxb-34044266993-5Nnr2MuFUBS5JwGaPxLwK67i"),
+var slack = new Slack("REDACTED"),
 client = new Client(),
 map = new Hashmap(),
 userId = null,
