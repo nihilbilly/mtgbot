@@ -2,18 +2,19 @@ var fs = require('fs'),
 http = require('http'),
 Slack = require('slack-node'),
 Client = require('websocket').client,
-//Index = require('node-index'),
 Hashmap = require('hashmap'),
-//JSONStream = require('JSONStream'),
-path = require('path');
+path = require('path'),
+markov = require('markov');
+
+//cheap easy way to load in our pricing utils
+eval(fs.readFileSync('mtgbot-master/priceutil.js')+'');
 
 process.on('uncaughtException', function (err) {
 	console.log('Uncaught exception: ', err);
 });
 
-var slack = new Slack("REDACTED"),
+var slack = new Slack("xoxb-34044266993-5Nnr2MuFUBS5JwGaPxLwK67i"),
 client = new Client(),
-//index = new Index(),
 map = new Hashmap(),
 userId = null,
 url = null;
@@ -34,24 +35,11 @@ for (var s in sets) {
 		var card = set.cards[c];
 		if (card.multiverseid !== undefined){
 			map.set(card.multiverseid.toString(), card.name);
-			//index.addDocument(card.id, { name: card.name, multiverseid: card.multiverseid.toString() });
 		}
 	}
 }
 
 sets = null;
-
-// TODO: add code to stream the extended file to read in flavor text on a per-request basis 
-// so we dont have to keep flavor text in memory (its a lot of data)
-/*var stream = fs.createReadStream(path.resolve(__dirname, 'AllSets.json'), {encoding: 'utf8'}),
-	parser = JSONStream.parse("*.cards[?(@.name=='Armageddon')]");
-	stream.pipe(parser);
-
-parser.on('data', function(data) {
-	console.log('received:', data);
-});
-
-return;*/
 
 console.log('Ready for requests...');
 
@@ -86,19 +74,10 @@ client.on('connect', function(connection) {
 				cardMatches.push(text.substring(i + 1, text.indexOf("]", i)));
 			}
 			
-			// some fun with pete
-			if (!cardMatches.length && data.user == 'U0HP4K8D7' && text.indexOf("soup") >= 0) {
-				slack.api("chat.postMessage", {channel: data.channel, as_user: true, text: ':stew:'}, function() {});
-				return;
-			}
-
-			// does someone want oracle text?
-			//if (text.contains(')
-			
 			// find cards in our index
 			for (i in cardMatches){
-				//var indexMatches = index.query(cardMatches[i]);
 				var indexMatches = [];
+				
 				for (var key in map._data) {
 					if (map._data[key][1].toLowerCase() === cardMatches[i].toLowerCase()) {
 						indexMatches.push(map.search(map._data[key][1]));
@@ -126,25 +105,50 @@ client.on('connect', function(connection) {
 			var totalRequests = bestMatches.length;
 			// create image attachment using gatherer image for each card we found and post a message
 			for (i in bestMatches) {
-				(function(index, channel) {
-					var output = '';
-					
+				(function(index, channel) {					
 					var name = map.get(bestMatches[index]);
 					var multiverseID = bestMatches[index];
 					
-					attachments.push({
-						title: name,
-						title_link: 'http://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=' + multiverseID,
-						image_url: 'http://gatherer.wizards.com/Handlers/Image.ashx?multiverseid=' + multiverseID + '&type=card'
-					});
+					var callback = function(price) {
+						attachments.push({
+							title: name + ' ' + price,
+							title_link: 'http://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=' + multiverseID,
+							image_url: 'http://gatherer.wizards.com/Handlers/Image.ashx?multiverseid=' + multiverseID + '&type=card'
+						});
 
-					totalRequests--;
-					if (totalRequests <= 0){
-						var JSONattachments = JSON.stringify(attachments);
-						slack.api("chat.postMessage", {channel: channel, as_user: true, text: ' ', attachments: JSONattachments}, function() {});
+						totalRequests--;
+						if (totalRequests <= 0){
+							var JSONattachments = JSON.stringify(attachments);
+							slack.api("chat.postMessage", {channel: channel, as_user: true, text: ' ', attachments: JSONattachments}, function() {});
+						}
 					}
+					
+					//getPrice found in priceutil.js
+					getPrice(name, callback);					
 				})(i, data.channel);
 			}
+			
+			//all right babies, lets do some markov shit!
+			if (!cardMatches.length && data.text.toLowerCase().indexOf('mimic') >= 0) {
+				if (data.text.indexOf('<@U') >= 0) {
+					//generate a markov chain between 20 and 12 links long
+					var m = markov(Math.floor(Math.random() * (20 - 12) + 12));
+					var user = data.text.substring(data.text.indexOf('<@U') + 2, data.text.indexOf('>'));
+					var s = fs.readFileSync(path.resolve(process.env.HOME, 'httpdocs/bmklogs/' + user + '.txt'), 'utf8');
+					m.seed(s, function() {
+						var res = m.pick();
+						if (res)
+							slack.api("chat.postMessage", {channel: data.channel, as_user: true, text: res.split('_').join(' ') });
+					});
+				}
+			} // some logging for the mimic command.
+			/*else if (!cardMatches.length && data.text.toLowerCase().indexOf('mimic') < 0) {
+				if (data.type === 'message' && !data.subtype) {
+					var ws = fs.createWriteStream(path.resolve(process.env.HOME, 'httpdocs/bmklogs/' + data.user + '.txt'), {'flags': 'a'});
+					ws.write(data.text);
+					ws.end();
+				}
+			}*/
 		}		
 	});
 });
