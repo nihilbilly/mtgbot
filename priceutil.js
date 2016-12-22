@@ -47,6 +47,7 @@ function getPrice(cardName, callback, tryHarder) {
 		res.on('end', function(chunk) {
 			var startPos = 0;
 			var lowestPrice = 99999;
+			var linkToLowest = '';
 			
 			if (body.indexOf('div class=\"imageContainer"', startPos) == -1) {
 				if (!tryHarder) {
@@ -74,13 +75,69 @@ function getPrice(cardName, callback, tryHarder) {
 				var price = parseFloat(strPrice);
 				if (price < lowestPrice) {
 					lowestPrice = price;
+					linkToLowest = imgLink;
 				}
 				
 			}
 			if (lowestPrice == 99999) {
 				lowestPrice = ''
 			}
-			callback('$' + lowestPrice);
+			
+			//get the foil price now
+			var actualLinkStart = body.indexOf("a href=\"", linkToLowest) + 8;
+			var actualLinkEnd = body.indexOf("\">", actualLinkStart);
+			var actualLink = body.substr(actualLinkStart, actualLinkEnd - actualLinkStart);
+			
+			options = {
+				host: 'shop.tcgplayer.com',
+				port: 80,
+				path: actualLink
+			};
+			
+			http.get(options, function(res) {
+				var cardBody = '';
+				res.on('data', function(chunk) {
+					cardBody += chunk;
+				});
+				res.on('end', function(chunk) {
+					var foilPrice = '';
+					var setTD = cardBody.indexOf("<b>Set Name:</b>");
+					var setAnchor = cardBody.indexOf("a href=", setTD);
+					var startSet = cardBody.indexOf(">", setAnchor) + 1;
+					var endSet = cardBody.indexOf("/a", startSet) - 1;
+					var setText = cardBody.substr(startSet, endSet - startSet);
+					
+					setText = setText.replace("9th", "Ninth");
+					setText = setText.replace("8th", "Eighth");
+					setText = setText.replace("7th", "Seventh");
+					
+					var marketPriceTD = cardBody.indexOf(">Market Price</td>", setTD);
+					var foilTD = cardBody.indexOf("Foil", marketPriceTD);
+					var endOfMarketPriceTd = cardBody.indexOf("</table>", marketPriceTD);
+					
+					//if no foil price was found
+					if (endOfMarketPriceTd < foilTD) {
+						callback('$' + lowestPrice, setText);
+						return;
+					}
+					
+					var startFoilPrice = cardBody.indexOf("$", foilTD);
+					var startNAPrice = cardBody.indexOf("N/A", foilTD);
+					var endFoilPrice = cardBody.indexOf("</td>", startFoilPrice);
+					
+					if (startNAPrice < startFoilPrice && startNAPrice > -1) {
+						startFoilPrice = startNAPrice;
+						endFoilPrice = cardBody.indexOf("</td>", startFoilPrice);
+					}
+					foilPrice = cardBody.substr(startFoilPrice, endFoilPrice - startFoilPrice);
+
+					
+					callback("$" + lowestPrice + " (Foil: " + foilPrice + ")", setText);
+				});
+			}).on('error', function(e){
+				console.log('error', e);
+			});
+			
 		});
 	}).on('error', function(e){
 		console.log('error', e);

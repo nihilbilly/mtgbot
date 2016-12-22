@@ -2,7 +2,6 @@ var fs = require('fs'),
 http = require('http'),
 Slack = require('slack-node'),
 Client = require('websocket').client,
-Hashmap = require('hashmap'),
 path = require('path'),
 markov = require('markov');
 
@@ -13,11 +12,11 @@ process.on('uncaughtException', function (err) {
 	console.log('Uncaught exception: ', err);
 });
 
-var slack = new Slack("REDACTED"),
+var slack = new Slack(""),
 client = new Client(),
-map = new Hashmap(),
 userId = null,
-url = null;
+url = null,
+map = new Array();
 
 console.log('Fetching list of card names...');
 
@@ -30,11 +29,13 @@ console.log('Indexing card names...');
 // add each card in every set to our index
 for (var s in sets) {
 	var set = sets[s];
+	var setName = set.name;
+
 	for (var c in set.cards) {
 
 		var card = set.cards[c];
 		if (card.multiverseid !== undefined){
-			map.set(card.multiverseid.toString(), card.name);
+			map.push({ multiverseID: card.multiverseid.toString(), name: card.name, setName: setName });
 		}
 	}
 }
@@ -53,7 +54,7 @@ client.on('connect', function(connection) {
 	});
 	
 	connection.on('close', function(reasonCode, description) {
-		console.log('Connection closed. ', reasonCode, description);
+		console.log('Connection closed', reasonCode, description);
 		console.log('Attempting reconnect');
 		startAPI();
 	});
@@ -67,7 +68,9 @@ client.on('connect', function(connection) {
 			var attachments = [], bestMatches = [], cardMatches = [];
 			
 			// replace [[double brackets]] with [single brackets] if someones too used to reddit
-			var text = data.text.replace(/(\[){2,}/, "[").replace(/(\]){2,}/, "]");
+			// also replace fancy quotes
+			var text = data.text.replace(/(\[){2,}/, "[").replace(/(\]){2,}/, "]").replace('’','\'');
+			
 			
 			// look for [card names] in brackets
 			for (var i = text.indexOf("["); i >= 0; i = text.indexOf("[", i + 1)) {
@@ -78,23 +81,26 @@ client.on('connect', function(connection) {
 			for (i in cardMatches){
 				var indexMatches = [];
 				
-				for (var key in map._data) {
-					if (map._data[key][1].toLowerCase() === cardMatches[i].toLowerCase()) {
-						indexMatches.push(map.search(map._data[key][1]));
+				for (var key in Object.keys(map)) {
+					var cardName = map[key].name.toLowerCase();
+					if (cardName === cardMatches[i].toLowerCase()) {
+						indexMatches.push(map[key]);
 					}
 				}
 				
 				var target = cardMatches[i].toLowerCase().replace(/[^ \w]/g, ' ').replace(/ +/g, ' ');
-				var match = null;
+				var match = new Array();
+				var sets = new Array();
 				
 				for (var j in indexMatches) {
-					var indexMatch = map.get(indexMatches[j]);
-					var test = indexMatch.toLowerCase().replace(/[^ \w]/g, ' ').replace(/ +/g, ' ');
+					var indexMatch = indexMatches[j];
+					var test = indexMatch.name.toLowerCase().replace(/[^ \w]/g, ' ').replace(/ +/g, ' ');
 					
-					// if our [card] contains the full text of a card in our index, we got a match
-					//	try to find the most correct match by keeping the longest [card name] that matches our index
-					if (target.indexOf(test) >= 0 && (!match || indexMatch.length > match.length)) {
-						match = indexMatches[j];
+					if (target.indexOf(test) >= 0 && match.length == 0) {
+						sets.push({ setName: indexMatches[j].setName, multiverseID: indexMatches[j].multiverseID });
+						match.push({ name: indexMatches[j].name, sets: sets });
+					} else if (match) {
+						match[0].sets.push({ setName: indexMatches[j].setName, multiverseID: indexMatches[j].multiverseID });
 					}
 				}
 				if (match) {
@@ -106,12 +112,18 @@ client.on('connect', function(connection) {
 			// create image attachment using gatherer image for each card we found and post a message
 			for (i in bestMatches) {
 				(function(index, channel) {					
-					var name = map.get(bestMatches[index]);
-					var multiverseID = bestMatches[index];
+					var name = bestMatches[index][0].name;
+					var multiverseID = '';
 					
-					var callback = function(price) {
+					var callback = function(price, setName) {
+						for (var j in bestMatches[index][0].sets) {
+							if (bestMatches[index][0].sets[j].setName === setName) {
+								multiverseID = bestMatches[index][0].sets[j].multiverseID;
+							}
+						}
+						
 						attachments.push({
-							title: name + ' ' + price,
+							title: name + ' [' + setName + '] ' + price,
 							title_link: 'http://gatherer.wizards.com/Pages/Card/Details.aspx?multiverseid=' + multiverseID,
 							image_url: 'http://gatherer.wizards.com/Handlers/Image.ashx?multiverseid=' + multiverseID + '&type=card'
 						});
