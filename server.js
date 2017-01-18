@@ -1,13 +1,12 @@
-//var fs = require('fs'),
-//http = require('http'),
-var Slack = require('slack-node'),
+var fs = require('fs'),
+Slack = require('slack-node'),
 Client = require('websocket').client,
 //path = require('path'),
 //markov = require('markov'),
 https = require('https');
 
 //cheap easy way to load in our pricing utils
-//eval(fs.readFileSync('mtgbot-master/priceutil.js')+'');
+eval(fs.readFileSync('mtgbot-master/priceutil.js')+'');
 
 process.on('uncaughtException', function (err) {
 	console.log('Uncaught exception: ', err);
@@ -60,7 +59,7 @@ client.on('connect', function(connection) {
 			
 			// find cards in on scryfall
 			for (i in cardMatches){
-				var p = '/cards/named?exact=' + cardMatches[i].replace(' ', '+') + '&format=json';
+				var p = '/cards/named?exact=' + encodeURIComponent(cardMatches[i]) + '&format=json';
 				var options = {
 					host: 'api.scryfall.com',
 					port: 443,
@@ -75,13 +74,17 @@ client.on('connect', function(connection) {
 					res.on('end', function(chunk) {
 						var card = JSON.parse(body);
 						
-						attachments.push({
-							title: card.name + ' [' + card.set_name + '] $' + card.usd,
-							title_link: card.related_uris.gatherer,
-							image_url: 'http://gatherer.wizards.com/Handlers/Image.ashx?multiverseid=' + card.multiverse_id + '&type=card'
-						});
-						totalRequests--;
-						done();
+						var doneGettingPrice = function(priceText) {
+							attachments.push({
+								title: card.name + ' [' + card.set_name + '] ' + priceText,
+								title_link: card.related_uris.gatherer,
+								image_url: 'http://gatherer.wizards.com/Handlers/Image.ashx?multiverseid=' + card.multiverse_id + '&type=card'
+							});
+							totalRequests--;
+							done();
+						};
+						
+						getPriceWithScryfallLink(card.purchase_uris.tcgplayer, doneGettingPrice);
 					});
 				});
 			}

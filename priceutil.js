@@ -1,29 +1,51 @@
-var fs = require('fs'),
-JSONStream = require('JSONStream'),
-path = require('path'),
-querystring = require('querystring');
+var querystring = require('querystring'),
 http = require('http');
 
-//some testing stuff
-/*var stream = fs.createReadStream(path.resolve(__dirname, 'AllSets.json'), {encoding: 'utf8'}),
-	//parser = JSONStream.parse("*.cards.[?(@.name=='Armageddon')]");
-	//parser = JSONStream.parse("*.cards.*.name");
-	parser = JSONStream.parse([true, 'cards', true, 'name']);
+function getPriceWithScryfallLink(link, callback) {
+	var p = link.replace('http://store.tcgplayer.com', '').replace('?partner=Scryfall', '');
+	var options = {
+		host: 'shop.tcgplayer.com',
+		port: 80,
+		path: p
+	};
 	
-stream.pipe(parser).on('data', function(data) {
-	if (data == 'Armageddon') {
-		console.log('received:', data);
-		stream.destroy();
-	}
-});*/
+	http.get(options, function(res) {
+		var body = '';
+		res.on('data', function(chunk) {
+			body += chunk;
+		});
+		
+		res.on('end', function(chunk) {
+			var marketPriceTD = body.indexOf(">Market Price</td>");
+			var normalTD = body.indexOf("Normal", marketPriceTD);
+			var foilTD = body.indexOf("Foil", marketPriceTD);
+			var endOfMarketPriceTd = body.indexOf("</table>", marketPriceTD);
+			var startNormalPrice = body.indexOf("$", normalTD);
+			var endNormalPrice = body.indexOf("</td>", startNormalPrice);
+			var normalPrice = body.substr(startNormalPrice, endNormalPrice - startNormalPrice);
+			
+			//if no foil price was found
+			if (endOfMarketPriceTd < foilTD) {
+				callback(normalPrice);
+				return;
+			}
+			
+			var startFoilPrice = body.indexOf("$", foilTD);
+			var startNAPrice = body.indexOf("N/A", foilTD);
+			var endFoilPrice = body.indexOf("</td>", startFoilPrice);
+			
+			if (startNAPrice < startFoilPrice && startNAPrice > -1) {
+				startFoilPrice = startNAPrice;
+				endFoilPrice = body.indexOf("</td>", startFoilPrice);
+			}
+			var foilPrice = body.substr(startFoilPrice, endFoilPrice - startFoilPrice);
+			
+			callback(normalPrice + " (Foil: " + foilPrice + ")");
+		});
+	});
+}
 
-//stream.on('start', function(data) { console.log('started', data);});
-/*stream.on('data', function(data) {
-	console.log('received:', data);
-});*/
-
-
-function getPrice(cardName, callback, tryHarder) {
+/*function getPrice(cardName, callback, tryHarder) {
 	var sanitizedName = querystring.stringify({"Product Name": cardName });
 	
 	if (tryHarder == null) {
@@ -110,6 +132,7 @@ function getPrice(cardName, callback, tryHarder) {
 					setText = setText.replace("9th", "Ninth");
 					setText = setText.replace("8th", "Eighth");
 					setText = setText.replace("7th", "Seventh");
+					setText = setText.replace("&#39;", "'");
 					
 					var marketPriceTD = cardBody.indexOf(">Market Price</td>", setTD);
 					var foilTD = cardBody.indexOf("Foil", marketPriceTD);
@@ -130,7 +153,6 @@ function getPrice(cardName, callback, tryHarder) {
 						endFoilPrice = cardBody.indexOf("</td>", startFoilPrice);
 					}
 					foilPrice = cardBody.substr(startFoilPrice, endFoilPrice - startFoilPrice);
-
 					
 					callback("$" + lowestPrice + " (Foil: " + foilPrice + ")", setText);
 				});
@@ -142,4 +164,4 @@ function getPrice(cardName, callback, tryHarder) {
 	}).on('error', function(e){
 		console.log('error', e);
 	});
-}
+}*/
